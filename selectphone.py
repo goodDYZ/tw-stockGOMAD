@@ -211,31 +211,42 @@ def fetch_social_sentiment(target_stocks):
     return sentiment_counts
 
 def generate_static_chart(stock_id, df, info_dict):
-    """使用 Matplotlib 繪製帶有重要資訊標註的高畫質靜態 K 線圖 (PNG) - 採用純英文標籤徹底根治亂碼"""
+    """使用 Matplotlib 繪製帶有均線、布林軌道與重要資訊標註的高畫質靜態 K 線圖 (PNG)"""
+    # 先在完整歷史資料上計算均線與布林軌道，確保 60MA 與布林通道完整
+    df['MA5'] = df['Close'].rolling(5).mean()
+    df['MA20'] = df['Close'].rolling(20).mean()
+    df['MA60'] = df['Close'].rolling(60).mean()
+    
+    df['BB_Middle'] = df['Close'].rolling(20).mean()
+    df['BB_Std'] = df['Close'].rolling(20).std()
+    df['BB_Upper'] = df['BB_Middle'] + (2 * df['BB_Std'])
+    df['BB_Lower'] = df['BB_Middle'] - (2 * df['BB_Std'])
+
+    # 擷取最後 60 筆資料繪圖
     df_plot = df.tail(60).copy()
     
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
     
-    # 計算均線
-    df_plot['MA5'] = df_plot['Close'].rolling(5).mean()
-    df_plot['MA20'] = df_plot['Close'].rolling(20).mean()
-    df_plot['MA60'] = df_plot['Close'].rolling(60).mean()
-    
-    # 繪製 K 線
     x = np.arange(len(df_plot))
     dates = df_plot.index
     
+    # 繪製 K 線
     for i in range(len(df_plot)):
         color = 'red' if df_plot['Close'].iloc[i] >= df_plot['Open'].iloc[i] else 'green'
         ax1.vlines(x[i], df_plot['Low'].iloc[i], df_plot['High'].iloc[i], color=color, linewidth=1)
         ax1.vlines(x[i], df_plot['Open'].iloc[i], df_plot['Close'].iloc[i], color=color, linewidth=3)
 
-    # 繪製均線
+    # 繪製均線 (含完整 60MA)
     ax1.plot(x, df_plot['MA5'], label='MA5', color='orange', linewidth=1.2)
     ax1.plot(x, df_plot['MA20'], label='MA20', color='blue', linewidth=1.2)
     ax1.plot(x, df_plot['MA60'], label='MA60', color='purple', linewidth=1.2)
     
-    # 標註前3日最高價（改用英文標籤）
+    # 繪製布林軌道 (Bollinger Bands)
+    ax1.plot(x, df_plot['BB_Upper'], label='BB Upper', color='gray', linestyle='--', linewidth=1, alpha=0.7)
+    ax1.plot(x, df_plot['BB_Lower'], label='BB Lower', color='gray', linestyle='--', linewidth=1, alpha=0.7)
+    ax1.fill_between(x, df_plot['BB_Upper'], df_plot['BB_Lower'], color='gray', alpha=0.04)
+
+    # 標註前3日最高價
     if len(df_plot) >= 4:
         prev_3day_high = df_plot['High'].iloc[-4:-1].max()
         ax1.axhline(y=prev_3day_high, color='red', linestyle='--', linewidth=1, label=f'High 3D: {prev_3day_high:.1f}')
@@ -244,14 +255,14 @@ def generate_static_chart(stock_id, df, info_dict):
     vol_colors = ['red' if df_plot['Close'].iloc[i] >= df_plot['Open'].iloc[i] else 'green' for i in range(len(df_plot))]
     ax2.bar(x, df_plot['Volume'], color=vol_colors, alpha=0.8)
     
-    # 標題與重要資訊標註（全面改用英文與數字，確保 100% 不會亂碼且畫風乾淨）
+    # 標題與重要資訊標註（使用安全英文避免亂碼）
     title_text = (
         f"Stock ID: {stock_id} | Close: {info_dict['close']} | Vol: {info_dict['volume']}\n"
         f"Foreign 5D: {info_dict['foreign_buy_5d']} | Trust 5D: {info_dict['trust_buy_5d']} | PTT: {info_dict.get('ptt_cnt', 0)}"
     )
     ax1.set_title(title_text, fontsize=10, fontweight='bold', pad=10)
     
-    ax1.legend(loc='upper left', fontsize=9)
+    ax1.legend(loc='upper left', fontsize=8)
     ax1.grid(True, linestyle=':', alpha=0.5)
     ax2.grid(True, linestyle=':', alpha=0.5)
     
@@ -264,7 +275,7 @@ def generate_static_chart(stock_id, df, info_dict):
     
     # 儲存為 PNG
     filepath = os.path.join(CHART_DIR, f"{stock_id}_kline.png")
-    plt.savefig(filepath, dpi=200) # 提高解析度讓線條更細緻平滑
+    plt.savefig(filepath, dpi=200)
     plt.close(fig)
     return filepath
 
@@ -318,7 +329,7 @@ def evaluate_stock(stock_id, df, chip_data):
 # 🌐 Streamlit 網頁主介面
 # ==========================================
 st.title("📈 台股智慧選股與靜態重點圖表系統")
-st.markdown("點擊下方按鈕即可開始執行篩選，並在網頁上直接檢視標註重要數值的高畫質靜態 K 線圖：")
+st.markdown("點擊下方按鈕即可開始執行篩選，並在網頁上直接檢視帶有 60MA 與布林軌道的高畫質靜態 K 線圖：")
 
 if st.button("🚀 開始執行全市場篩選", type="primary"):
     with st.spinner("正在抓取法人籌碼與歷史 K 線，並生成標註圖表，請稍候..."):
@@ -366,7 +377,7 @@ if st.button("🚀 開始執行全市場篩選", type="primary"):
             res['sentiment_score'] = s_info['score']
             final_results.append(res)
             
-            # 生成帶有標註的靜態 PNG 圖表
+            # 生成帶有 60MA 與布林軌道的靜態 PNG 圖表
             png_path = generate_static_chart(sid, df_stock, res)
             stock_pngs[sid] = png_path
 
@@ -378,7 +389,7 @@ if st.button("🚀 開始執行全市場篩選", type="primary"):
         st.dataframe(res_df, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("🖼️ 入選個股靜態 K 線圖檢視（含重要數值標註）")
+        st.subheader("🖼️ 入選個股靜態 K 線圖檢視（含均線、布林軌道與數值標註）")
         
         for sid, png_path in stock_pngs.items():
             st.markdown(f"### 📌 Stock ID: {sid}")
