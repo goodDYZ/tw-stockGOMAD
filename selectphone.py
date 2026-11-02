@@ -12,12 +12,28 @@ import matplotlib
 matplotlib.use('Agg') # 避免雲端伺服器 GUI 報錯
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.font_manager as fm
+import urllib.request
 import streamlit as st
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
-# 設定字型支援中文（若雲端環境無標楷體，使用預設字型並忽略警告）
-plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial Unicode MS', 'Microsoft JhengHei']
+# ==========================================
+# 🌐 自動下載並設定中文字型（徹底解決雲端亂碼）
+# ==========================================
+font_path = "NotoSansTC-Regular.ttf"
+if not os.path.exists(font_path):
+    try:
+        url = "https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
+        urllib.request.urlretrieve(url, font_path)
+    except Exception:
+        pass
+
+if os.path.exists(font_path):
+    fe = fm.FontEntry(fname=font_path, name='NotoSansTC')
+    fm.fontManager.ttflist.insert(0, fe)
+    plt.rcParams['font.family'] = 'NotoSansTC'
+
 plt.rcParams['axes.unicode_minus'] = False
 
 # ==========================================
