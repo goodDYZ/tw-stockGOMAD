@@ -12,29 +12,9 @@ import matplotlib
 matplotlib.use('Agg') # 避免雲端伺服器 GUI 報錯
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import matplotlib.font_manager as fm
-import urllib.request
 import streamlit as st
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-
-# ==========================================
-# 🌐 自動下載並設定中文字型（徹底解決雲端亂碼）
-# ==========================================
-font_path = "NotoSansTC-Regular.ttf"
-if not os.path.exists(font_path):
-    try:
-        url = "https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
-        urllib.request.urlretrieve(url, font_path)
-    except Exception:
-        pass
-
-if os.path.exists(font_path):
-    fe = fm.FontEntry(fname=font_path, name='NotoSansTC')
-    fm.fontManager.ttflist.insert(0, fe)
-    plt.rcParams['font.family'] = 'NotoSansTC'
-
-plt.rcParams['axes.unicode_minus'] = False
 
 # ==========================================
 # ⚙️ 網頁版面設定
@@ -231,7 +211,7 @@ def fetch_social_sentiment(target_stocks):
     return sentiment_counts
 
 def generate_static_chart(stock_id, df, info_dict):
-    """使用 Matplotlib 繪製帶有重要資訊標註的高畫質靜態 K 線圖 (PNG)"""
+    """使用 Matplotlib 繪製帶有重要資訊標註的高畫質靜態 K 線圖 (PNG) - 採用純英文標籤徹底根治亂碼"""
     df_plot = df.tail(60).copy()
     
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
@@ -241,11 +221,10 @@ def generate_static_chart(stock_id, df, info_dict):
     df_plot['MA20'] = df_plot['Close'].rolling(20).mean()
     df_plot['MA60'] = df_plot['Close'].rolling(60).mean()
     
-    # 繪製 K 線 (簡化為收盤價走勢與高低區間線)
+    # 繪製 K 線
     x = np.arange(len(df_plot))
     dates = df_plot.index
     
-    # K線高低範圍
     for i in range(len(df_plot)):
         color = 'red' if df_plot['Close'].iloc[i] >= df_plot['Open'].iloc[i] else 'green'
         ax1.vlines(x[i], df_plot['Low'].iloc[i], df_plot['High'].iloc[i], color=color, linewidth=1)
@@ -256,21 +235,21 @@ def generate_static_chart(stock_id, df, info_dict):
     ax1.plot(x, df_plot['MA20'], label='MA20', color='blue', linewidth=1.2)
     ax1.plot(x, df_plot['MA60'], label='MA60', color='purple', linewidth=1.2)
     
-    # 標註前3日最高價
+    # 標註前3日最高價（改用英文標籤）
     if len(df_plot) >= 4:
         prev_3day_high = df_plot['High'].iloc[-4:-1].max()
-        ax1.axhline(y=prev_3day_high, color='red', linestyle='--', linewidth=1, label=f'前3日高點: {prev_3day_high:.1f}')
+        ax1.axhline(y=prev_3day_high, color='red', linestyle='--', linewidth=1, label=f'High 3D: {prev_3day_high:.1f}')
 
     # 成交量柱狀圖
     vol_colors = ['red' if df_plot['Close'].iloc[i] >= df_plot['Open'].iloc[i] else 'green' for i in range(len(df_plot))]
     ax2.bar(x, df_plot['Volume'], color=vol_colors, alpha=0.8)
     
-    # 標題與重要資訊標註
+    # 標題與重要資訊標註（全面改用英文與數字，確保 100% 不會亂碼且畫風乾淨）
     title_text = (
-        f"股票代號: {stock_id} | 收盤價: {info_dict['close']} | 成交量: {info_dict['volume']}張\n"
-        f"外資5日買超: {info_dict['foreign_buy_5d']}張 | 投信5日買超: {info_dict['trust_buy_5d']}張 | PTT聲量: {info_dict.get('ptt_cnt', 0)}篇"
+        f"Stock ID: {stock_id} | Close: {info_dict['close']} | Vol: {info_dict['volume']}\n"
+        f"Foreign 5D: {info_dict['foreign_buy_5d']} | Trust 5D: {info_dict['trust_buy_5d']} | PTT: {info_dict.get('ptt_cnt', 0)}"
     )
-    ax1.set_title(title_text, fontsize=11, fontweight='bold', pad=10)
+    ax1.set_title(title_text, fontsize=10, fontweight='bold', pad=10)
     
     ax1.legend(loc='upper left', fontsize=9)
     ax1.grid(True, linestyle=':', alpha=0.5)
@@ -285,7 +264,7 @@ def generate_static_chart(stock_id, df, info_dict):
     
     # 儲存為 PNG
     filepath = os.path.join(CHART_DIR, f"{stock_id}_kline.png")
-    plt.savefig(filepath, dpi=150)
+    plt.savefig(filepath, dpi=200) # 提高解析度讓線條更細緻平滑
     plt.close(fig)
     return filepath
 
@@ -402,7 +381,7 @@ if st.button("🚀 開始執行全市場篩選", type="primary"):
         st.subheader("🖼️ 入選個股靜態 K 線圖檢視（含重要數值標註）")
         
         for sid, png_path in stock_pngs.items():
-            st.markdown(f"### 📌 股票代號: {sid}")
+            st.markdown(f"### 📌 Stock ID: {sid}")
             st.image(png_path, use_container_width=True)
             st.markdown("---")
 
