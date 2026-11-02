@@ -2,6 +2,7 @@ streamlit
 pandas
 numpy
 yfinance
-mplfinance
-requests
+plotly
 beautifulsoup4
+curl_cffi
+requests
