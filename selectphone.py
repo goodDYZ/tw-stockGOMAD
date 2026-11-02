@@ -5,21 +5,26 @@ import time
 import requests
 import json
 import io
-import zipfile
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import matplotlib
+matplotlib.use('Agg') # 避免雲端伺服器 GUI 報錯
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import streamlit as st
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+
+# 設定字型支援中文（若雲端環境無標楷體，使用預設字型並忽略警告）
+plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial Unicode MS', 'Microsoft JhengHei']
+plt.rcParams['axes.unicode_minus'] = False
 
 # ==========================================
 # ⚙️ 網頁版面設定
 # ==========================================
 st.set_page_config(
-    page_title="台股全市場智慧選股與圖表下載系統",
+    page_title="台股智慧選股與靜態圖表系統",
     page_icon="📈",
     layout="wide"
 )
@@ -47,7 +52,6 @@ def fetch_chips_twse_official():
         roc_year = target_date.year - 1911
         date_tpex = f"{roc_year}/{target_date.month:02d}/{target_date.day:02d}"
         
-        # 1. 上市 TWSE
         url_twse = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={date_twse}&selectType=ALL&response=json"
         is_valid_trading_day = False
         
@@ -87,7 +91,6 @@ def fetch_chips_twse_official():
         if not is_valid_trading_day:
             continue
 
-        # 2. 上櫃 TPEx
         url_tpex_csv = f"https://www.tpex.org.tw/web/stock/3insti/daily_trade/3itrade_hedge_result.php?l=zh-tw&se=AL&t=D&d={date_tpex}&p=1&st=1&s=0,asc,0&o=csv"
         try:
             res = requests.get(url_tpex_csv, headers=headers, timeout=10)
@@ -165,7 +168,7 @@ def get_stock_mapping():
     return stock_map
 
 # ==========================================
-# 💬 3. 聲量爬蟲與 HTML 圖表生成
+# 💬 3. 聲量爬蟲與靜態圖表繪製引擎
 # ==========================================
 def fetch_social_sentiment(target_stocks):
     stock_info_map = {str(sid).strip(): '' for sid in target_stocks}
@@ -211,50 +214,64 @@ def fetch_social_sentiment(target_stocks):
 
     return sentiment_counts
 
-def plot_kline_chart(stock_id, df):
-    try:
-        if df is None or len(df) < 20:
-            return
-        df_plot = df.tail(60).copy()
-        
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                            vertical_spacing=0.03, row_heights=[0.7, 0.3])
+def generate_static_chart(stock_id, df, info_dict):
+    """使用 Matplotlib 繪製帶有重要資訊標註的高畫質靜態 K 線圖 (PNG)"""
+    df_plot = df.tail(60).copy()
+    
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+    
+    # 計算均線
+    df_plot['MA5'] = df_plot['Close'].rolling(5).mean()
+    df_plot['MA20'] = df_plot['Close'].rolling(20).mean()
+    df_plot['MA60'] = df_plot['Close'].rolling(60).mean()
+    
+    # 繪製 K 線 (簡化為收盤價走勢與高低區間線)
+    x = np.arange(len(df_plot))
+    dates = df_plot.index
+    
+    # K線高低範圍
+    for i in range(len(df_plot)):
+        color = 'red' if df_plot['Close'].iloc[i] >= df_plot['Open'].iloc[i] else 'green'
+        ax1.vlines(x[i], df_plot['Low'].iloc[i], df_plot['High'].iloc[i], color=color, linewidth=1)
+        ax1.vlines(x[i], df_plot['Open'].iloc[i], df_plot['Close'].iloc[i], color=color, linewidth=3)
 
-        fig.add_trace(go.Candlestick(
-            x=df_plot.index, open=df_plot['Open'], high=df_plot['High'],
-            low=df_plot['Low'], close=df_plot['Close'],
-            name='K線', increasing_line_color='red', decreasing_line_color='green'
-        ), row=1, col=1)
+    # 繪製均線
+    ax1.plot(x, df_plot['MA5'], label='MA5', color='orange', linewidth=1.2)
+    ax1.plot(x, df_plot['MA20'], label='MA20', color='blue', linewidth=1.2)
+    ax1.plot(x, df_plot['MA60'], label='MA60', color='purple', linewidth=1.2)
+    
+    # 標註前3日最高價
+    if len(df_plot) >= 4:
+        prev_3day_high = df_plot['High'].iloc[-4:-1].max()
+        ax1.axhline(y=prev_3day_high, color='red', linestyle='--', linewidth=1, label=f'前3日高點: {prev_3day_high:.1f}')
 
-        for ma, color in zip([5, 20, 60], ['orange', 'blue', 'purple']):
-            ma_series = df_plot['Close'].rolling(window=ma).mean()
-            fig.add_trace(go.Scatter(x=df_plot.index, y=ma_series, mode='lines', name=f'MA{ma}', line=dict(color=color, width=1)), row=1, col=1)
-
-        if len(df_plot) >= 4:
-            prev_3day_max_high = df_plot['High'].iloc[-4:-1].max()
-            fig.add_trace(go.Scatter(x=df_plot.index, y=[prev_3day_max_high] * len(df_plot), mode='lines', name='前3日最高價', line=dict(color='red', dash='dash', width=1.2)), row=1, col=1)
-
-        colors = ['red' if c >= o else 'green' for c, o in zip(df_plot['Close'], df_plot['Open'])]
-        fig.add_trace(go.Bar(x=df_plot.index, y=df_plot['Volume'], name='成交量', marker_color=colors), row=2, col=1)
-
-        fig.update_layout(title=f"Stock {stock_id} 互動式 K 線圖", xaxis_rangeslider_visible=False, height=600, margin=dict(l=30, r=30, t=40, b=30))
-
-        filepath = os.path.join(CHART_DIR, f"{stock_id}_kline.html")
-        fig.write_html(filepath)
-    except Exception:
-        pass
-
-def create_charts_zip():
-    """將 charts 資料夾打包成記憶體中的 ZIP 檔案供下載"""
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for root, dirs, files in os.walk(CHART_DIR):
-            for file in files:
-                if file.endswith(".html"):
-                    file_path = os.path.join(root, file)
-                    zip_file.write(file_path, os.path.basename(file_path))
-    buffer.seek(0)
-    return buffer
+    # 成交量柱狀圖
+    vol_colors = ['red' if df_plot['Close'].iloc[i] >= df_plot['Open'].iloc[i] else 'green' for i in range(len(df_plot))]
+    ax2.bar(x, df_plot['Volume'], color=vol_colors, alpha=0.8)
+    
+    # 標題與重要資訊標註
+    title_text = (
+        f"股票代號: {stock_id} | 收盤價: {info_dict['close']} | 成交量: {info_dict['volume']}張\n"
+        f"外資5日買超: {info_dict['foreign_buy_5d']}張 | 投信5日買超: {info_dict['trust_buy_5d']}張 | PTT聲量: {info_dict.get('ptt_cnt', 0)}篇"
+    )
+    ax1.set_title(title_text, fontsize=11, fontweight='bold', pad=10)
+    
+    ax1.legend(loc='upper left', fontsize=9)
+    ax1.grid(True, linestyle=':', alpha=0.5)
+    ax2.grid(True, linestyle=':', alpha=0.5)
+    
+    # X軸日期標籤
+    step = max(1, len(dates) // 8)
+    ax2.set_xticks(x[::step])
+    ax2.set_xticklabels([d.strftime('%m/%d') for d in dates[::step]], rotation=0, fontsize=9)
+    
+    plt.tight_layout()
+    
+    # 儲存為 PNG
+    filepath = os.path.join(CHART_DIR, f"{stock_id}_kline.png")
+    plt.savefig(filepath, dpi=150)
+    plt.close(fig)
+    return filepath
 
 # ==========================================
 # 📊 4. 篩選策略引擎
@@ -305,11 +322,11 @@ def evaluate_stock(stock_id, df, chip_data):
 # ==========================================
 # 🌐 Streamlit 網頁主介面
 # ==========================================
-st.title("📈 台股全市場智慧選股與圖表下載系統")
-st.markdown("點擊下方按鈕即可開始執行全市場自動化篩選並打包下載互動 K 線圖：")
+st.title("📈 台股智慧選股與靜態重點圖表系統")
+st.markdown("點擊下方按鈕即可開始執行篩選，並在網頁上直接檢視標註重要數值的高畫質靜態 K 線圖：")
 
-if st.button("🚀 開始執行全市場篩選與打包", type="primary"):
-    with st.spinner("正在抓取法人籌碼與歷史 K 線，並生成互動圖表，請稍候（約需 1~2 分鐘）..."):
+if st.button("🚀 開始執行全市場篩選", type="primary"):
+    with st.spinner("正在抓取法人籌碼與歷史 K 線，並生成標註圖表，請稍候..."):
         chip_data = fetch_chips_twse_official()
         stock_map = get_stock_mapping()
         tickers = list(stock_map.values())
@@ -346,6 +363,7 @@ if st.button("🚀 開始執行全市場篩選與打包", type="primary"):
         sentiment_data = fetch_social_sentiment(passed_ids)
         
         final_results = []
+        stock_pngs = {}
         for res, df_stock in passed_stocks:
             sid = res['stock_id']
             s_info = sentiment_data.get(sid, {'ptt': 0, 'dcard': 0, 'score': 0.0})
@@ -353,24 +371,24 @@ if st.button("🚀 開始執行全市場篩選與打包", type="primary"):
             res['sentiment_score'] = s_info['score']
             final_results.append(res)
             
-            # 自動在雲端生成 HTML 圖表
-            plot_kline_chart(sid, df_stock)
+            # 生成帶有標註的靜態 PNG 圖表
+            png_path = generate_static_chart(sid, df_stock, res)
+            stock_pngs[sid] = png_path
 
         res_df = pd.DataFrame(final_results)
         if 'sentiment_score' in res_df.columns and 'foreign_buy_5d' in res_df.columns:
             res_df = res_df.sort_values(by=['sentiment_score', 'foreign_buy_5d'], ascending=False)
 
-        # 顯示選股結果表格
+        # 顯示表格
         st.dataframe(res_df, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("🖼️ 入選個股靜態 K 線圖檢視（含重要數值標註）")
         
-        # 建立 ZIP 壓縮檔並提供下載按鈕
-        zip_buffer = create_charts_zip()
-        st.download_button(
-            label="📦 下載所有入選股票的互動 K 線圖 (ZIP 壓縮檔)",
-            data=zip_buffer,
-            file_name=f"stock_charts_{datetime.now().strftime('%Y%m%d')}.zip",
-            mime="application/zip",
-            type="primary"
-        )
+        for sid, png_path in stock_pngs.items():
+            st.markdown(f"### 📌 股票代號: {sid}")
+            st.image(png_path, use_container_width=True)
+            st.markdown("---")
+
     else:
         st.info("ℹ 今日全市場無符合 6 大嚴格條件之標的。")
