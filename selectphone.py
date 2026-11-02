@@ -4,6 +4,8 @@ import datetime
 import time
 import requests
 import json
+import io
+import zipfile
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -17,7 +19,7 @@ from datetime import datetime, timedelta
 # ⚙️ 網頁版面設定
 # ==========================================
 st.set_page_config(
-    page_title="台股全市場智慧選股與 HTML 圖表生成系統",
+    page_title="台股全市場智慧選股與圖表下載系統",
     page_icon="📈",
     layout="wide"
 )
@@ -242,6 +244,18 @@ def plot_kline_chart(stock_id, df):
     except Exception:
         pass
 
+def create_charts_zip():
+    """將 charts 資料夾打包成記憶體中的 ZIP 檔案供下載"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for root, dirs, files in os.walk(CHART_DIR):
+            for file in files:
+                if file.endswith(".html"):
+                    file_path = os.path.join(root, file)
+                    zip_file.write(file_path, os.path.basename(file_path))
+    buffer.seek(0)
+    return buffer
+
 # ==========================================
 # 📊 4. 篩選策略引擎
 # ==========================================
@@ -291,11 +305,11 @@ def evaluate_stock(stock_id, df, chip_data):
 # ==========================================
 # 🌐 Streamlit 網頁主介面
 # ==========================================
-st.title("📈 台股全市場智慧選股系統")
-st.markdown("點擊下方按鈕即可開始執行全市場自動化篩選並生成獨立 HTML 圖表：")
+st.title("📈 台股全市場智慧選股與圖表下載系統")
+st.markdown("點擊下方按鈕即可開始執行全市場自動化篩選並打包下載互動 K 線圖：")
 
-if st.button("🚀 開始執行全市場篩選", type="primary"):
-    with st.spinner("正在抓取法人籌碼與歷史 K 線，請稍候（約需 1~2 分鐘）..."):
+if st.button("🚀 開始執行全市場篩選與打包", type="primary"):
+    with st.spinner("正在抓取法人籌碼與歷史 K 線，並生成互動圖表，請稍候（約需 1~2 分鐘）..."):
         chip_data = fetch_chips_twse_official()
         stock_map = get_stock_mapping()
         tickers = list(stock_map.values())
@@ -348,6 +362,15 @@ if st.button("🚀 開始執行全市場篩選", type="primary"):
 
         # 顯示選股結果表格
         st.dataframe(res_df, use_container_width=True)
-        st.info("💡 提示：所有入選股票的高畫質互動 K 線圖已自動儲存至伺服器的 `./charts` 資料夾中。")
+        
+        # 建立 ZIP 壓縮檔並提供下載按鈕
+        zip_buffer = create_charts_zip()
+        st.download_button(
+            label="📦 下載所有入選股票的互動 K 線圖 (ZIP 壓縮檔)",
+            data=zip_buffer,
+            file_name=f"stock_charts_{datetime.now().strftime('%Y%m%d')}.zip",
+            mime="application/zip",
+            type="primary"
+        )
     else:
         st.info("ℹ 今日全市場無符合 6 大嚴格條件之標的。")
